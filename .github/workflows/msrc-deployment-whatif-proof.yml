@@ -1,0 +1,94 @@
+name: MSRC Deployment What-If input proof
+
+on:
+  push:
+    paths:
+      - .github/workflows/msrc-deployment-whatif-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run safe Deployment What-If command-substitution proof
+        run: |
+          set -u
+          proof_log="$RUNNER_TEMP/msrc-deployment-whatif-proof.log"
+          : > "$proof_log"
+          fakebin="$RUNNER_TEMP/fakebin"
+          mkdir -p "$fakebin"
+          cat > "$fakebin/az" <<'AZ'
+          #!/usr/bin/env bash
+          printf 'az_called:%s\n' "$*"
+          AZ
+          chmod +x "$fakebin/az"
+          export PATH="$fakebin:/usr/bin:/bin"
+          valid_subscription='00000000-0000-0000-0000-000000000000'
+          valid_resource_group='rg-safe'
+          valid_template_file='azuredeploy.json'
+
+          run_case() {
+            local name="$1"
+            local resource_group_input="$2"
+            local additional_input="$3"
+            local marker="$RUNNER_TEMP/${name}.marker"
+            local resource_group_rendered="${resource_group_input/__MARKER__/$marker}"
+            local additional_rendered="${additional_input/__MARKER__/$marker}"
+            local run_script="set -euo pipefail
+          PARAMETERS=\"\"
+          if [[ ! -z \"\" || ! -z \"$additional_rendered\" ]]; then
+            PARAMETERS=\"--parameters\"
+            if [[ ! -z \"\" ]]; then
+              PARAMETERS=\"\$PARAMETERS @\"
+            fi
+            if [[ ! -z \"$additional_rendered\" ]]; then
+              PARAMETERS=\"\$PARAMETERS $additional_rendered\"
+            fi
+          fi
+          az deployment group what-if \\
+            --resource-group $resource_group_rendered \\
+            --subscription $valid_subscription \\
+            --template-file $valid_template_file \\
+            \$PARAMETERS"
+            rm -f "$marker"
+            {
+              echo "case=$name"
+              echo "resourceGroup=$resource_group_rendered"
+              echo "additionalParameters=$additional_rendered"
+            } | tee -a "$proof_log"
+            bash -lc "$run_script" | tee -a "$proof_log"
+            {
+              echo "exit_code=$?"
+              echo "marker_exists=$(test -f "$marker" && echo true || echo false)"
+              if test -f "$marker"; then echo "marker_value=$(cat "$marker")"; fi
+              echo
+            } | tee -a "$proof_log"
+          }
+
+          echo "runner_os=$RUNNER_OS" | tee -a "$proof_log"
+          echo "event_name=$GITHUB_EVENT_NAME" | tee -a "$proof_log"
+          echo "repository=$GITHUB_REPOSITORY" | tee -a "$proof_log"
+          echo "sha=$GITHUB_SHA" | tee -a "$proof_log"
+          echo "source_sink=Azure/deployment-what-if-action action.yml lines 27-43" | tee -a "$proof_log"
+          run_case negative_control "$valid_resource_group" ''
+          run_case positive_resource_group '$(printf msrc_deployment_whatif_payload > __MARKER__)'$valid_resource_group ''
+          run_case positive_additional_parameters "$valid_resource_group" '$(printf msrc_deployment_whatif_payload > __MARKER__)key=value'
+          grep -q 'case=negative_control' "$proof_log"
+          grep -q 'marker_exists=false' "$proof_log"
+          grep -q 'case=positive_resource_group' "$proof_log"
+          grep -q 'case=positive_additional_parameters' "$proof_log"
+          grep -q 'marker_exists=true' "$proof_log"
+          grep -q 'marker_value=msrc_deployment_whatif_payload' "$proof_log"
+      - name: Upload proof log
+        uses: actions/upload-artifact@v4
+        with:
+          name: msrc-deployment-whatif-proof-log
+          path: ${{ runner.temp }}/msrc-deployment-whatif-proof.log
+          if-no-files-found: error
