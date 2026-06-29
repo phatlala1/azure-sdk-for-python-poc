@@ -2,6 +2,15 @@ name: MSRC Build VM Image AIB runtime proof
 
 on:
   workflow_dispatch:
+    inputs:
+      case:
+        description: Runtime proof case to run
+        required: true
+        default: positive
+        type: choice
+        options:
+          - positive
+          - negative
 
 permissions:
   id-token: write
@@ -18,11 +27,9 @@ env:
   AIB_VM_SIZE: Standard_D2s_v3
 
 jobs:
-  positive-aib-runtime:
+  aib-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    outputs:
-      template_name: ${{ steps.capture.outputs.template_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,31 +42,41 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Prepare positive customizer source
+      - name: Prepare customizer source
         id: prep
         shell: bash
+        env:
+          CASE_NAME: ${{ github.event.inputs.case }}
         run: |
           set -euo pipefail
-          positive_source="$GITHUB_WORKSPACE/"'msrc||true;printf${IFS}payload_before_trusted_customizer>msrc_aib_runtime_marker;#'
-          mkdir -p "$positive_source"
-          printf 'owned positive artifact\n' > "$positive_source/owned-artifact.txt"
+          if [ "$CASE_NAME" = "positive" ]; then
+            customizer_source="$GITHUB_WORKSPACE/"'msrc||true;printf${IFS}payload_before_trusted_customizer>msrc_aib_runtime_marker;#'
+            template_name="msrcAibPositive${GITHUB_RUN_ID}"
+          else
+            customizer_source="$GITHUB_WORKSPACE/msrc-safe-artifact"
+            template_name="msrcAibNegative${GITHUB_RUN_ID}"
+          fi
+          mkdir -p "$customizer_source"
+          printf 'owned %s artifact\n' "$CASE_NAME" > "$customizer_source/owned-artifact.txt"
           rm -f msrc_aib_runtime_marker
           {
-            echo "case=positive"
+            echo "case=$CASE_NAME"
             echo "event_name=$GITHUB_EVENT_NAME"
             echo "trusted_workflow_file_sha=$GITHUB_SHA"
-            echo "customizer_source=$positive_source"
+            echo "customizer_source=$customizer_source"
+            echo "template_name=$template_name"
             echo "pre_runner_marker_exists=$(test -f msrc_aib_runtime_marker && echo true || echo false)"
-          } | tee positive-prep.txt
-          echo "customizer_source=$positive_source" >> "$GITHUB_OUTPUT"
+          } | tee prep.txt
+          echo "customizer_source=$customizer_source" >> "$GITHUB_OUTPUT"
+          echo "template_name=$template_name" >> "$GITHUB_OUTPUT"
 
-      - name: Run Azure build-vm-image positive
-        id: aib_positive
+      - name: Run Azure build-vm-image
+        id: aib
         uses: Azure/build-vm-image@v0.1.1
         continue-on-error: true
         with:
           resource-group-name: ${{ env.AIB_RESOURCE_GROUP }}
-          image-builder-template-name: msrcAibPositive${{ github.run_id }}
+          image-builder-template-name: ${{ steps.prep.outputs.template_name }}
           build-timeout-in-minutes: 90
           vm-size: ${{ env.AIB_VM_SIZE }}
           managed-identity: ${{ env.AIB_MANAGED_IDENTITY }}
@@ -73,121 +90,33 @@ jobs:
             echo marker_present_before_trusted_customizer=$(test -f msrc_aib_runtime_marker && echo true || echo false)
             if test -f msrc_aib_runtime_marker; then cat msrc_aib_runtime_marker; fi
           dist-type: VHD
-          dist-image-tags: msrc:build-vm-image-positive
+          dist-image-tags: msrc:${{ github.event.inputs.case }}
 
-      - name: Capture positive outputs
-        id: capture
+      - name: Capture outputs
         shell: bash
+        env:
+          CASE_NAME: ${{ github.event.inputs.case }}
+          TEMPLATE_NAME: ${{ steps.prep.outputs.template_name }}
         run: |
           set -euo pipefail
           mkdir -p evidence
-          template_name="msrcAibPositive${GITHUB_RUN_ID}"
-          echo "template_name=$template_name" >> "$GITHUB_OUTPUT"
-          cat > evidence/positive-action-outputs.json <<JSON
+          cat > "evidence/${CASE_NAME}-action-outputs.json" <<JSON
           {
-            "case": "positive",
-            "action_outcome": "${{ steps.aib_positive.outcome }}",
-            "imagebuilder_run_status": "${{ steps.aib_positive.outputs.imagebuilder-run-status }}",
-            "run_output_name": "${{ steps.aib_positive.outputs.run-output-name }}",
-            "custom_image_uri": "${{ steps.aib_positive.outputs.custom-image-uri }}",
-            "template_name": "$template_name",
+            "case": "$CASE_NAME",
+            "action_outcome": "${{ steps.aib.outcome }}",
+            "imagebuilder_run_status": "${{ steps.aib.outputs.imagebuilder-run-status }}",
+            "run_output_name": "${{ steps.aib.outputs.run-output-name }}",
+            "custom_image_uri": "${{ steps.aib.outputs.custom-image-uri }}",
+            "template_name": "$TEMPLATE_NAME",
             "trusted_workflow_file_sha": "$GITHUB_SHA"
           }
           JSON
-          cat positive-prep.txt > evidence/positive-prep.txt
-          az image builder show -g "$AIB_RESOURCE_GROUP" -n "$template_name" -o json > evidence/positive-generated-template.json || true
-          az image builder show-runs -g "$AIB_RESOURCE_GROUP" -n "$template_name" -o json > evidence/positive-aib-run-status.json || true
-          az resource list -g "$AIB_RESOURCE_GROUP" -o json > evidence/positive-action-resources.json || true
+          cp prep.txt "evidence/${CASE_NAME}-prep.txt"
+          az image builder show -g "$AIB_RESOURCE_GROUP" -n "$TEMPLATE_NAME" -o json > "evidence/${CASE_NAME}-generated-template.json" || true
+          az image builder show-runs -g "$AIB_RESOURCE_GROUP" -n "$TEMPLATE_NAME" -o json > "evidence/${CASE_NAME}-aib-run-status.json" || true
+          az resource list -g "$AIB_RESOURCE_GROUP" -o json > "evidence/${CASE_NAME}-action-resources.json" || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: build-vm-image-positive-aib-runtime
-          path: evidence/
-
-  negative-aib-runtime:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs: positive-aib-runtime
-    if: always()
-    outputs:
-      template_name: ${{ steps.capture.outputs.template_name }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Azure login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Prepare negative customizer source
-        id: prep
-        shell: bash
-        run: |
-          set -euo pipefail
-          negative_source="$GITHUB_WORKSPACE/msrc-safe-artifact"
-          mkdir -p "$negative_source"
-          printf 'owned negative artifact\n' > "$negative_source/owned-artifact.txt"
-          rm -f msrc_aib_runtime_marker
-          {
-            echo "case=negative"
-            echo "event_name=$GITHUB_EVENT_NAME"
-            echo "trusted_workflow_file_sha=$GITHUB_SHA"
-            echo "customizer_source=$negative_source"
-            echo "pre_runner_marker_exists=$(test -f msrc_aib_runtime_marker && echo true || echo false)"
-          } | tee negative-prep.txt
-          echo "customizer_source=$negative_source" >> "$GITHUB_OUTPUT"
-
-      - name: Run Azure build-vm-image negative
-        id: aib_negative
-        uses: Azure/build-vm-image@v0.1.1
-        continue-on-error: true
-        with:
-          resource-group-name: ${{ env.AIB_RESOURCE_GROUP }}
-          image-builder-template-name: msrcAibNegative${{ github.run_id }}
-          build-timeout-in-minutes: 90
-          vm-size: ${{ env.AIB_VM_SIZE }}
-          managed-identity: ${{ env.AIB_MANAGED_IDENTITY }}
-          location: ${{ env.AIB_LOCATION }}
-          source-os-type: linux
-          source-image-type: PlatformImage
-          source-image: ${{ env.AIB_SOURCE_IMAGE }}
-          customizer-source: ${{ steps.prep.outputs.customizer_source }}
-          customizer-script: |
-            echo trusted_customizer_script_start
-            echo marker_present_before_trusted_customizer=$(test -f msrc_aib_runtime_marker && echo true || echo false)
-            if test -f msrc_aib_runtime_marker; then cat msrc_aib_runtime_marker; fi
-          dist-type: VHD
-          dist-image-tags: msrc:build-vm-image-negative
-
-      - name: Capture negative outputs
-        id: capture
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p evidence
-          template_name="msrcAibNegative${GITHUB_RUN_ID}"
-          echo "template_name=$template_name" >> "$GITHUB_OUTPUT"
-          cat > evidence/negative-action-outputs.json <<JSON
-          {
-            "case": "negative",
-            "action_outcome": "${{ steps.aib_negative.outcome }}",
-            "imagebuilder_run_status": "${{ steps.aib_negative.outputs.imagebuilder-run-status }}",
-            "run_output_name": "${{ steps.aib_negative.outputs.run-output-name }}",
-            "custom_image_uri": "${{ steps.aib_negative.outputs.custom-image-uri }}",
-            "template_name": "$template_name",
-            "trusted_workflow_file_sha": "$GITHUB_SHA"
-          }
-          JSON
-          cat negative-prep.txt > evidence/negative-prep.txt
-          az image builder show -g "$AIB_RESOURCE_GROUP" -n "$template_name" -o json > evidence/negative-generated-template.json || true
-          az image builder show-runs -g "$AIB_RESOURCE_GROUP" -n "$template_name" -o json > evidence/negative-aib-run-status.json || true
-          az resource list -g "$AIB_RESOURCE_GROUP" -o json > evidence/negative-action-resources.json || true
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-vm-image-negative-aib-runtime
+          name: build-vm-image-${{ github.event.inputs.case }}-aib-runtime
           path: evidence/
