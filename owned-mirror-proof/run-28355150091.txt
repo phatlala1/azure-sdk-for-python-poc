@@ -1,0 +1,7 @@
+run_id=28355150091
+proof_label=negative-benign-pr
+typespec_input=https://github.com/phatlala1/typespec-poc/pull/1
+typespec_repo=phatlala1/typespec-poc
+typespec_ref=d17f32eafbc4a1bfcc7edb2e737ed048ed2f5c73
+trusted_phase_start=true
+pre_push_marker_exists=false
