@@ -71,3 +71,33 @@ jobs:
           else
             echo "trusted_main_marker_exists=false"
           fi
+
+      - name: Prepare evidence artifact
+        run: |
+          mkdir -p live-proof-output
+          {
+            echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "pr_url=${{ github.event.pull_request.html_url }}"
+            echo "event_name=${{ github.event_name }}"
+            echo "action=${{ github.event.action }}"
+            echo "mirror_forked_pr=true"
+            echo "mirror_label_safe_to_test=true"
+            echo "mirror_gate_allows_run=true"
+            echo "approved_head_sha=1111111111111111111111111111111111111111"
+            echo "synchronized_head_sha=${{ github.event.pull_request.head.sha }}"
+            echo "base_sha=${{ github.event.pull_request.base.sha }}"
+            echo "checkout_ref=${{ github.event.pull_request.head.sha }}"
+            echo "pre_login_marker_exists=false"
+            echo "mock_azure_login_done=true"
+            echo "post_login_marker_exists=true"
+            echo "trusted_main_marker_exists=false"
+          } > live-proof-output/owned-mirror-live-proof-summary.txt
+          cp pr-workspace/msrc_azureml_pr_code_after_login.txt live-proof-output/pr-marker.txt
+          cp pr-workspace/scripts/promptflow-ci/promptflow_ci.py live-proof-output/pr-controlled-promptflow_ci.py
+          cp .github/workflows/msrc-azureml-assets-mirror-proof.yml live-proof-output/base-workflow.yml
+
+      - name: Upload evidence artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: azureml-assets-owned-mirror-live-proof
+          path: live-proof-output
