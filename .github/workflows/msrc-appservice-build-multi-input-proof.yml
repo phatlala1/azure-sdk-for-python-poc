@@ -1,0 +1,421 @@
+name: MSRC AppService Build multi-input proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_directory_value:
+        description: Value passed only to source-directory
+        required: true
+        default: "."
+      output_directory_value:
+        description: Value passed only to output-directory
+        required: true
+        default: "out-safe"
+      platform_value:
+        description: Value passed only to platform
+        required: true
+        default: "nodejs"
+      platform_version_value:
+        description: Value passed only to platform-version
+        required: true
+        default: "16.20.2"
+
+jobs:
+  positive-source-directory:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare app
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.source_directory_value }}
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("appservice-build multi input proof")' > index.js
+          rm -f msrc_marker_source.txt
+          echo "case=positive_source_directory"
+          echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+          printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+          echo "pre_marker_source_exists=$(test -f msrc_marker_source.txt && echo true || echo false)"
+      - name: Run action
+        id: appservice
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: ${{ github.event.inputs.source_directory_value }}
+          platform: nodejs
+      - name: Check marker
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.source_directory_value }}
+        run: |
+          set -euo pipefail
+          echo "action_outcome=${{ steps.appservice.outcome }}"
+          echo "post_marker_source_exists=$(test -f msrc_marker_source.txt && echo true || echo false)"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=positive_source_directory"
+            echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+            printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+            echo "pre_marker_source_exists=false"
+            echo "post_marker_source_exists=$(test -f msrc_marker_source.txt && echo true || echo false)"
+            if [ -f msrc_marker_source.txt ]; then cat msrc_marker_source.txt; fi
+          } > "$RUNNER_TEMP/evidence/positive-source-directory.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-multi-positive-source-directory
+          path: ${{ runner.temp }}/evidence/
+
+  positive-output-directory:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare app
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.output_directory_value }}
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("appservice-build multi input proof")' > index.js
+          rm -f msrc_marker_output.txt
+          echo "case=positive_output_directory"
+          echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+          printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+          echo "pre_marker_output_exists=$(test -f msrc_marker_output.txt && echo true || echo false)"
+      - name: Run action
+        id: appservice
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          output-directory: ${{ github.event.inputs.output_directory_value }}
+          platform: nodejs
+      - name: Check marker
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.output_directory_value }}
+        run: |
+          set -euo pipefail
+          echo "action_outcome=${{ steps.appservice.outcome }}"
+          echo "post_marker_output_exists=$(test -f msrc_marker_output.txt && echo true || echo false)"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=positive_output_directory"
+            echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+            printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+            echo "pre_marker_output_exists=false"
+            echo "post_marker_output_exists=$(test -f msrc_marker_output.txt && echo true || echo false)"
+            if [ -f msrc_marker_output.txt ]; then cat msrc_marker_output.txt; fi
+          } > "$RUNNER_TEMP/evidence/positive-output-directory.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-multi-positive-output-directory
+          path: ${{ runner.temp }}/evidence/
+
+  positive-platform:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare app
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.platform_value }}
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("appservice-build multi input proof")' > index.js
+          rm -f msrc_marker_platform.txt
+          echo "case=positive_platform"
+          echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+          printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+          echo "pre_marker_platform_exists=$(test -f msrc_marker_platform.txt && echo true || echo false)"
+      - name: Run action
+        id: appservice
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          platform: ${{ github.event.inputs.platform_value }}
+      - name: Check marker
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.platform_value }}
+        run: |
+          set -euo pipefail
+          echo "action_outcome=${{ steps.appservice.outcome }}"
+          echo "post_marker_platform_exists=$(test -f msrc_marker_platform.txt && echo true || echo false)"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=positive_platform"
+            echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+            printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+            echo "pre_marker_platform_exists=false"
+            echo "post_marker_platform_exists=$(test -f msrc_marker_platform.txt && echo true || echo false)"
+            if [ -f msrc_marker_platform.txt ]; then cat msrc_marker_platform.txt; fi
+          } > "$RUNNER_TEMP/evidence/positive-platform.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-multi-positive-platform
+          path: ${{ runner.temp }}/evidence/
+
+  positive-platform-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare app
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.platform_version_value }}
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("appservice-build multi input proof")' > index.js
+          rm -f msrc_marker_version.txt
+          echo "case=positive_platform_version"
+          echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+          printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+          echo "pre_marker_version_exists=$(test -f msrc_marker_version.txt && echo true || echo false)"
+      - name: Run action
+        id: appservice
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          platform: nodejs
+          platform-version: ${{ github.event.inputs.platform_version_value }}
+      - name: Check marker
+        shell: bash
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.platform_version_value }}
+        run: |
+          set -euo pipefail
+          echo "action_outcome=${{ steps.appservice.outcome }}"
+          echo "post_marker_version_exists=$(test -f msrc_marker_version.txt && echo true || echo false)"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=positive_platform_version"
+            echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+            printf 'dispatch_input_value=%s\n' "$DISPATCH_INPUT"
+            echo "pre_marker_version_exists=false"
+            echo "post_marker_version_exists=$(test -f msrc_marker_version.txt && echo true || echo false)"
+            if [ -f msrc_marker_version.txt ]; then cat msrc_marker_version.txt; fi
+          } > "$RUNNER_TEMP/evidence/positive-platform-version.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-multi-positive-platform-version
+          path: ${{ runner.temp }}/evidence/
+
+  negative-controls:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - source-directory
+          - output-directory
+          - platform
+          - platform-version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("negative control")' > index.js
+          rm -f "msrc_negative_${{ matrix.case }}.txt"
+          echo "case=negative_${{ matrix.case }}"
+          echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+      - name: Run source-directory negative
+        if: matrix.case == 'source-directory'
+        id: neg_source
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          platform: nodejs
+      - name: Run output-directory negative
+        if: matrix.case == 'output-directory'
+        id: neg_output
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          output-directory: out-safe
+          platform: nodejs
+      - name: Run platform negative
+        if: matrix.case == 'platform'
+        id: neg_platform
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          platform: nodejs
+      - name: Run platform-version negative
+        if: matrix.case == 'platform-version'
+        id: neg_version
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          platform: nodejs
+          platform-version: 16.20.2
+      - name: Check negative marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="msrc_negative_${{ matrix.case }}.txt"
+          echo "negative_marker_exists=$(test -f "$marker" && echo true || echo false)"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=negative_${{ matrix.case }}"
+            echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+            echo "negative_marker_exists=$(test -f "$marker" && echo true || echo false)"
+          } > "$RUNNER_TEMP/evidence/negative-${{ matrix.case }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-multi-negative-${{ matrix.case }}
+          path: ${{ runner.temp }}/evidence/
+
+  patched-no-eval-control:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create patched local copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v3 https://github.com/Azure/appservice-build.git patched-appservice-build
+          cat > patched-appservice-build/entrypoint.sh <<'SH'
+          #!/bin/sh
+          set -e
+          checkArg() {
+              case $1 in
+                  (*[![:blank:]]*) echo "$1";;
+                  (*) echo ""
+              esac
+          }
+          getAbsolutePath(){
+              local path="$1"
+              if [ -z "$path" ]; then
+                  echo "$PWD"
+                  return
+              fi
+              case $path in
+                  /*) echo "$path" ;;
+                  *) echo "$PWD/$path" ;;
+              esac
+          }
+          sourceDirectory=$(checkArg "$1")
+          platform=$(checkArg "$2")
+          platformVersion=$(checkArg "$3")
+          outputDirectory=$(checkArg "$4")
+          if [ -z "$sourceDirectory" ]; then
+              sourceDirectory="$PWD"
+          else
+              sourceDirectory=$(getAbsolutePath "$sourceDirectory")
+          fi
+          set -- oryx build "$sourceDirectory"
+          if [ -n "$outputDirectory" ]; then
+              outputDirectory=$(getAbsolutePath "$outputDirectory")
+              set -- "$@" -o "$outputDirectory"
+          fi
+          if [ -n "$platform" ]; then
+              set -- "$@" --platform "$platform"
+          fi
+          if [ -n "$platformVersion" ]; then
+              set -- "$@" --platform-version "$platformVersion"
+          fi
+          echo "Running patched command without eval"
+          "$@"
+          SH
+          chmod +x patched-appservice-build/entrypoint.sh
+      - name: Prepare app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo msrc_oryx_build_script_running"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("patched no eval")' > index.js
+          rm -f msrc_patched_marker_source.txt
+          echo "patched_pre_marker_exists=$(test -f msrc_patched_marker_source.txt && echo true || echo false)"
+      - name: Run patched no-eval action with same payload
+        id: patched
+        uses: ./patched-appservice-build
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: '.$(printf "payload_should_not_execute\n" > "$GITHUB_WORKSPACE/msrc_patched_marker_source.txt")'
+          platform: nodejs
+      - name: Check patched marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "patched_action_outcome=${{ steps.patched.outcome }}"
+          echo "patched_post_marker_exists=$(test -f msrc_patched_marker_source.txt && echo true || echo false)"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=patched_no_eval_source_directory"
+            echo "trusted_workflow_file_sha=${GITHUB_SHA}"
+            echo "patched_action_outcome=${{ steps.patched.outcome }}"
+            echo "patched_pre_marker_exists=false"
+            echo "patched_post_marker_exists=$(test -f msrc_patched_marker_source.txt && echo true || echo false)"
+          } > "$RUNNER_TEMP/evidence/patched-no-eval-source-directory.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-multi-patched-no-eval
+          path: ${{ runner.temp }}/evidence/
