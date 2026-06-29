@@ -1,0 +1,4 @@
+github_token_env_present=false
+authenticated_git_available=true
+can_create_test_issue=false
+can_push_to_owned_test_branch=true

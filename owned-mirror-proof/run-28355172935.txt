@@ -1,0 +1,7 @@
+run_id=28355172935
+proof_label=positive-marker-pr
+typespec_input=https://github.com/phatlala1/typespec-poc/pull/2
+typespec_repo=phatlala1/typespec-poc
+typespec_ref=41b9125f099aee036dcff3ed07987fad2844d9ef
+trusted_phase_start=true
+pre_push_marker_exists=true

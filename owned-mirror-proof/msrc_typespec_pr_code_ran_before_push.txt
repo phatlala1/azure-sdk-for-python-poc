@@ -1,0 +1,4 @@
+poc_phase=build
+poc_phase=install
+poc_phase=prepare
+poc_phase=regenerate
