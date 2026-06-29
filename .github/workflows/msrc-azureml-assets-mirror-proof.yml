@@ -1,0 +1,73 @@
+name: MSRC AzureML Assets Mirror Proof
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  mirror-proof:
+    name: AzureML safe-to-test mirror proof
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror safe-to-test gate state
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "action=${{ github.event.action }}"
+          echo "mirror_forked_pr=true"
+          echo "mirror_label_safe_to_test=true"
+          echo "mirror_gate_allows_run=true"
+          echo "approved_head_sha=1111111111111111111111111111111111111111"
+          echo "synchronized_head_sha=${{ github.event.pull_request.head.sha }}"
+          echo "checkout_ref=${{ github.event.pull_request.head.sha }}"
+
+      - name: Checkout PR-controlled branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-workspace
+          persist-credentials: false
+
+      - name: Pre-login guard
+        run: |
+          if [ -f pr-workspace/msrc_azureml_pr_code_after_login.txt ]; then
+            echo "pre_login_marker_exists=true"
+            exit 1
+          else
+            echo "pre_login_marker_exists=false"
+          fi
+
+      - name: Mock Azure login phase
+        run: |
+          echo "mock_azure_login_done=true" > pr-workspace/mock_azure_login_done.txt
+          echo "mock_azure_login_done=true"
+
+      - name: Run PR-controlled promptflow script after mock login
+        working-directory: pr-workspace
+        run: |
+          python scripts/promptflow-ci/promptflow_ci.py
+          if [ -f msrc_azureml_pr_code_after_login.txt ]; then
+            echo "post_login_marker_exists=true"
+            cat msrc_azureml_pr_code_after_login.txt
+          else
+            echo "post_login_marker_exists=false"
+            exit 1
+          fi
+
+      - name: Negative control checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: trusted-main
+          persist-credentials: false
+
+      - name: Negative control trusted main has no attacker marker
+        run: |
+          if [ -f trusted-main/msrc_azureml_pr_code_after_login.txt ]; then
+            echo "trusted_main_marker_exists=true"
+            exit 1
+          else
+            echo "trusted_main_marker_exists=false"
+          fi
