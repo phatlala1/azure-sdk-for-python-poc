@@ -1,0 +1,78 @@
+name: MSRC Workload Orchestration input proof
+
+on:
+  push:
+    paths:
+      - .github/workflows/msrc-workload-orchestration-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run safe solution-template-version-id command-substitution proof
+        run: |
+          set -u
+          proof_log="$RUNNER_TEMP/msrc-workload-orchestration-proof.log"
+          : > "$proof_log"
+          fakebin="$RUNNER_TEMP/fakebin"
+          mkdir -p "$fakebin"
+          cat > "$fakebin/az" <<'AZ'
+          #!/usr/bin/env bash
+          printf 'az_called:%s\n' "$*"
+          AZ
+          chmod +x "$fakebin/az"
+          export PATH="$fakebin:/usr/bin:/bin"
+          valid_solution='/subscriptions/000/resourceGroups/rg/providers/Microsoft.Edge/solutionTemplates/sol/versions/1.0.0'
+          valid_target='/subscriptions/000/resourceGroups/rg/providers/Microsoft.Edge/targets/target1'
+
+          run_case() {
+            local name="$1"
+            local solution_input="$2"
+            local marker="$RUNNER_TEMP/${name}.marker"
+            local solution_rendered="${solution_input/__MARKER__/$marker}"
+            local run_script="set -euo pipefail
+          az extension add -n workload-orchestration
+          solution_template_version_id=\"$solution_rendered\"
+          target_id=\"$valid_target\"
+          echo after_assignment_solution=\"\$solution_template_version_id\"
+          echo after_assignment_target=\"\$target_id\""
+            rm -f "$marker"
+            {
+              echo "case=$name"
+              echo "solution_template_version_id=$solution_rendered"
+              echo "target_id=$valid_target"
+              echo "rendered_assignment=solution_template_version_id=\"$solution_rendered\""
+            } | tee -a "$proof_log"
+            bash -lc "$run_script" | tee -a "$proof_log"
+            {
+              echo "exit_code=$?"
+              echo "marker_exists=$(test -f "$marker" && echo true || echo false)"
+              if test -f "$marker"; then echo "marker_value=$(cat "$marker")"; fi
+              echo
+            } | tee -a "$proof_log"
+          }
+
+          echo "runner_os=$RUNNER_OS" | tee -a "$proof_log"
+          echo "event_name=$GITHUB_EVENT_NAME" | tee -a "$proof_log"
+          echo "repository=$GITHUB_REPOSITORY" | tee -a "$proof_log"
+          echo "sha=$GITHUB_SHA" | tee -a "$proof_log"
+          echo "source_sink=Azure/workload-orchestration-actions/deploy action.yml lines 21 and 22" | tee -a "$proof_log"
+          run_case negative_control "$valid_solution"
+          run_case positive_solution_id '$(printf msrc_workload_orchestration_payload > __MARKER__)'$valid_solution
+          grep -q 'marker_exists=false' "$proof_log"
+          grep -q 'marker_exists=true' "$proof_log"
+          grep -q 'marker_value=msrc_workload_orchestration_payload' "$proof_log"
+      - name: Upload proof log
+        uses: actions/upload-artifact@v4
+        with:
+          name: msrc-workload-orchestration-proof-log
+          path: ${{ runner.temp }}/msrc-workload-orchestration-proof.log
+          if-no-files-found: error
