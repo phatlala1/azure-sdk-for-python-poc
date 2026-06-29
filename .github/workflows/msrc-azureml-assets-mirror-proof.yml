@@ -94,7 +94,7 @@ jobs:
           } > live-proof-output/owned-mirror-live-proof-summary.txt
           cp pr-workspace/msrc_azureml_pr_code_after_login.txt live-proof-output/pr-marker.txt
           cp pr-workspace/scripts/promptflow-ci/promptflow_ci.py live-proof-output/pr-controlled-promptflow_ci.py
-          cp .github/workflows/msrc-azureml-assets-mirror-proof.yml live-proof-output/base-workflow.yml
+          cp trusted-main/.github/workflows/msrc-azureml-assets-mirror-proof.yml live-proof-output/base-workflow.yml
 
       - name: Upload evidence artifact
         uses: actions/upload-artifact@v4
