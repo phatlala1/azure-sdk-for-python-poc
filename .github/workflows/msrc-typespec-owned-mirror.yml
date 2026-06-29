@@ -1,0 +1,188 @@
+name: MSRC TypeSpec owned mirror proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      typespec_ref:
+        description: "Either 'main' or a phatlala1/typespec-poc pull request URL. The PR head repo + SHA will be checked out."
+        required: true
+        default: "main"
+      proof_label:
+        description: "Evidence label"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  owned-mirror-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout owned Azure SDK mirror
+        # SHA corresponds to actions/checkout@v6.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Resolve TypeSpec repo/ref
+        id: typespec-info
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TYPESPEC_REF: ${{ github.event.inputs.typespec_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT="${TYPESPEC_REF:-main}"
+          REPO="phatlala1/typespec-poc"
+          REF="main"
+          PR_NUMBER=""
+
+          if [[ "$INPUT" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)/?$ ]]; then
+            PR_OWNER="${BASH_REMATCH[1]}"
+            PR_REPO_NAME="${BASH_REMATCH[2]}"
+            PR_NUMBER="${BASH_REMATCH[3]}"
+            if [ "$PR_OWNER/$PR_REPO_NAME" != "phatlala1/typespec-poc" ]; then
+              echo "::error::Only pull request URLs from phatlala1/typespec-poc are accepted in this owned mirror (got ${PR_OWNER}/${PR_REPO_NAME})."
+              exit 1
+            fi
+            echo "Resolving PR #${PR_NUMBER}"
+            PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${PR_OWNER}/${PR_REPO_NAME}" \
+              --json headRefOid,headRepositoryOwner,headRepository)
+            HEAD_SHA=$(echo "$PR_JSON" | jq -r '.headRefOid')
+            HEAD_OWNER=$(echo "$PR_JSON" | jq -r '.headRepositoryOwner.login')
+            HEAD_REPO_NAME=$(echo "$PR_JSON" | jq -r '.headRepository.name')
+            REPO="${HEAD_OWNER}/${HEAD_REPO_NAME}"
+            REF="${HEAD_SHA}"
+          elif [ "$INPUT" != "main" ]; then
+            echo "::error::typespec_ref must be 'main' or a phatlala1/typespec-poc pull request URL (got: ${INPUT})."
+            exit 1
+          fi
+
+          {
+            echo "typespec_repo=$REPO"
+            echo "typespec_ref=$REF"
+            echo "typespec_pr_number=$PR_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "typespec_repo=$REPO"
+          echo "typespec_ref=$REF"
+
+      - name: Checkout TypeSpec mirror head
+        # SHA corresponds to actions/checkout@v6.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: ${{ steps.typespec-info.outputs.typespec_repo }}
+          ref: ${{ steps.typespec-info.outputs.typespec_ref }}
+          path: _typespec
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        # SHA corresponds to actions/setup-node@v6.
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: lts/*
+
+      - name: Build http-client-python
+        working-directory: _typespec/packages/http-client-python
+        env:
+          POC_AZURE_REPO_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts
+          npm run build
+
+      - name: Prepare Python environment
+        working-directory: _typespec/packages/http-client-python
+        env:
+          POC_AZURE_REPO_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          npm run install
+          npm run prepare
+
+      - name: Regenerate tests
+        working-directory: _typespec/packages/http-client-python
+        env:
+          POC_AZURE_REPO_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          npm run regenerate
+
+      - name: Trusted later write phase
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "trusted_phase_start"
+          if [ -f "msrc_typespec_pr_code_ran_before_push.txt" ]; then
+            echo "pre_push_marker_exists=true"
+          else
+            echo "pre_push_marker_exists=false"
+          fi
+
+          if [ -f "msrc_typespec_context_booleans.txt" ]; then
+            cat "msrc_typespec_context_booleans.txt"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          PROOF_DIR="owned-mirror-proof"
+          mkdir -p "$PROOF_DIR"
+          {
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "proof_label=${{ github.event.inputs.proof_label }}"
+            echo "typespec_input=${{ github.event.inputs.typespec_ref }}"
+            echo "typespec_repo=${{ steps.typespec-info.outputs.typespec_repo }}"
+            echo "typespec_ref=${{ steps.typespec-info.outputs.typespec_ref }}"
+            echo "trusted_phase_start=true"
+            if [ -f "msrc_typespec_pr_code_ran_before_push.txt" ]; then
+              echo "pre_push_marker_exists=true"
+            else
+              echo "pre_push_marker_exists=false"
+            fi
+          } > "$PROOF_DIR/run-${GITHUB_RUN_ID}.txt"
+
+          if [ -f "msrc_typespec_pr_code_ran_before_push.txt" ]; then
+            cp "msrc_typespec_pr_code_ran_before_push.txt" "$PROOF_DIR/msrc_typespec_pr_code_ran_before_push.txt"
+          fi
+          if [ -f "msrc_typespec_context_booleans.txt" ]; then
+            cp "msrc_typespec_context_booleans.txt" "$PROOF_DIR/msrc_typespec_context_booleans.txt"
+          fi
+
+          git checkout -B "msrc-typespec-owned-proof-${GITHUB_RUN_ID}"
+          git add "$PROOF_DIR"
+          git commit -m "owned mirror proof ${GITHUB_RUN_ID}" || true
+          if git push origin "msrc-typespec-owned-proof-${GITHUB_RUN_ID}" --force; then
+            echo "git_push_to_owned_branch_success=true"
+          else
+            echo "git_push_to_owned_branch_success=false"
+            exit 1
+          fi
+
+          ISSUE_URL=$(gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Owned mirror proof run ${GITHUB_RUN_ID}" \
+            --body "Safe owned mirror write-context proof for run ${GITHUB_RUN_ID}. No secrets included." 2>/dev/null || true)
+          if [ -n "$ISSUE_URL" ]; then
+            echo "trusted_can_create_test_issue=true"
+            gh issue close "$ISSUE_URL" --repo "$GITHUB_REPOSITORY" --comment "Closing safe owned mirror proof issue." >/dev/null 2>&1 || true
+          else
+            echo "trusted_can_create_test_issue=false"
+          fi
+
+      - name: Upload owned mirror evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owned-mirror-proof-${{ github.run_id }}
+          path: |
+            msrc_typespec_pr_code_ran_before_push.txt
+            msrc_typespec_context_booleans.txt
+            owned-mirror-proof/
+          if-no-files-found: ignore
