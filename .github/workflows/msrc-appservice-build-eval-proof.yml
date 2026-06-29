@@ -11,6 +11,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Prepare minimal Node app
         shell: bash
@@ -47,7 +49,7 @@ jobs:
             cat "$GITHUB_WORKSPACE/msrc_appservicebuild_marker"
             echo "positive_marker_contents_end"
           fi
-          mkdir -p evidence
+          mkdir -p "$RUNNER_TEMP/evidence"
           {
             echo "case=positive_source_directory"
             echo "run_id=${GITHUB_RUN_ID}"
@@ -57,12 +59,12 @@ jobs:
             if [ -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" ]; then
               cat "$GITHUB_WORKSPACE/msrc_appservicebuild_marker"
             fi
-          } > evidence/positive-source-directory-marker.txt
+          } > "$RUNNER_TEMP/evidence/positive-source-directory-marker.txt"
 
       - uses: actions/upload-artifact@v4
         with:
           name: appservice-build-positive-source-directory
-          path: evidence/
+          path: ${{ runner.temp }}/evidence/
 
   negative-exact-source-directory:
     name: negative exact source-directory
@@ -71,6 +73,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Prepare minimal Node app
         shell: bash
@@ -102,16 +106,16 @@ jobs:
           set -euo pipefail
           echo "negative_action_outcome=${{ steps.appservice_negative.outcome }}"
           echo "negative_marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
-          mkdir -p evidence
+          mkdir -p "$RUNNER_TEMP/evidence"
           {
             echo "case=negative_exact_source_directory"
             echo "run_id=${GITHUB_RUN_ID}"
             echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
             echo "run_sha=${GITHUB_SHA}"
             echo "marker_exists=$(test -f "$GITHUB_WORKSPACE/msrc_appservicebuild_marker" && echo true || echo false)"
-          } > evidence/negative-exact-source-directory-marker.txt
+          } > "$RUNNER_TEMP/evidence/negative-exact-source-directory-marker.txt"
 
       - uses: actions/upload-artifact@v4
         with:
           name: appservice-build-negative-exact-source-directory
-          path: evidence/
+          path: ${{ runner.temp }}/evidence/
