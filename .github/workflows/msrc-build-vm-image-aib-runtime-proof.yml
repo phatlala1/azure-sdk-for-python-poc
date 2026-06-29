@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          positive_source="$GITHUB_WORKSPACE/"'msrc$(printf payload_before_trusted_customizer>msrc_aib_runtime_marker)'
+          positive_source="$GITHUB_WORKSPACE/"'msrc||true;printf${IFS}payload_before_trusted_customizer>msrc_aib_runtime_marker;#'
           mkdir -p "$positive_source"
           printf 'owned positive artifact\n' > "$positive_source/owned-artifact.txt"
           rm -f msrc_aib_runtime_marker
