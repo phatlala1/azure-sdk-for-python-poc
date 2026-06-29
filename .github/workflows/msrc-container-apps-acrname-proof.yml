@@ -1,0 +1,78 @@
+name: MSRC Container Apps acrName proof
+
+on:
+  push:
+    paths:
+      - .github/workflows/msrc-container-apps-acrname-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run safe acrName command-injection proof
+        run: |
+          set -u
+          proof_log="$RUNNER_TEMP/msrc-container-apps-acrname-proof.log"
+          : > "$proof_log"
+          fakebin="$RUNNER_TEMP/fakebin"
+          mkdir -p "$fakebin"
+          cat > "$fakebin/az" <<'AZ'
+          #!/usr/bin/env bash
+          printf 'fake-json'
+          AZ
+          cat > "$fakebin/jq" <<'JQ'
+          #!/usr/bin/env bash
+          cat >/dev/null
+          printf 'fake-token'
+          JQ
+          cat > "$fakebin/docker" <<'DOCKER'
+          #!/usr/bin/env bash
+          printf 'docker_called\n'
+          DOCKER
+          chmod +x "$fakebin/az" "$fakebin/jq" "$fakebin/docker"
+          export PATH="$fakebin:/usr/bin:/bin"
+
+          run_case() {
+            local name="$1"
+            local acr="$2"
+            local marker="$RUNNER_TEMP/${name}.marker"
+            local script="CA_ADO_TASK_ACR_ACCESS_TOKEN=\$(az acr login --name ${acr} --output json --expose-token --only-show-errors | jq -r '.accessToken'); docker login ${acr}.azurecr.io -u 00000000-0000-0000-0000-000000000000 -p \$CA_ADO_TASK_ACR_ACCESS_TOKEN > /dev/null 2>&1"
+            rm -f "$marker"
+            {
+              echo "case=$name"
+              echo "acrName=$acr"
+              echo "generated_bash_c=$script"
+            } | tee -a "$proof_log"
+            bash -c "$script"
+            {
+              echo "exit_code=$?"
+              echo "marker_exists=$(test -f "$marker" && echo true || echo false)"
+              if test -f "$marker"; then echo "marker_value=$(cat "$marker")"; fi
+              echo
+            } | tee -a "$proof_log"
+          }
+
+          echo "runner_os=$RUNNER_OS" | tee -a "$proof_log"
+          echo "event_name=$GITHUB_EVENT_NAME" | tee -a "$proof_log"
+          echo "repository=$GITHUB_REPOSITORY" | tee -a "$proof_log"
+          echo "sha=$GITHUB_SHA" | tee -a "$proof_log"
+          echo "source_sink=Azure/container-apps-deploy-action src/ContainerRegistryHelper.ts loginAcrWithAccessTokenAsync" | tee -a "$proof_log"
+          run_case negative_control 'demoacr'
+          run_case positive_acrname "demoacr); printf msrc_acrName_payload > $RUNNER_TEMP/positive_acrname.marker; #"
+          grep -q 'marker_exists=false' "$proof_log"
+          grep -q 'marker_exists=true' "$proof_log"
+          grep -q 'marker_value=msrc_acrName_payload' "$proof_log"
+      - name: Upload proof log
+        uses: actions/upload-artifact@v4
+        with:
+          name: msrc-container-apps-acrname-proof-log
+          path: ${{ runner.temp }}/msrc-container-apps-acrname-proof.log
+          if-no-files-found: error
