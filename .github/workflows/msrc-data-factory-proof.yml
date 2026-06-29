@@ -1,0 +1,112 @@
+name: MSRC Data Factory deploy input proof
+
+on:
+  push:
+    paths:
+      - .github/workflows/msrc-data-factory-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run safe Data Factory PowerShell interpolation proof
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $proofLog = Join-Path $env:RUNNER_TEMP 'msrc-data-factory-proof.log'
+          '' | Set-Content -LiteralPath $proofLog
+          $prepost = Join-Path $env:RUNNER_TEMP 'PrePostDeploymentScript.ps1'
+          @'
+          param(
+            [string]$armTemplate,
+            [string]$ResourceGroupName,
+            [string]$DataFactoryName,
+            [bool]$predeployment,
+            [bool]$deleteDeployment
+          )
+          Write-Output "prepost_called=true"
+          Write-Output "armTemplate=$armTemplate"
+          Write-Output "ResourceGroupName=$ResourceGroupName"
+          Write-Output "DataFactoryName=$DataFactoryName"
+          Write-Output "predeployment=$predeployment"
+          Write-Output "deleteDeployment=$deleteDeployment"
+          '@ | Set-Content -LiteralPath $prepost
+
+          function Write-ProofLine([string]$Line) {
+            $Line | Tee-Object -FilePath $proofLog -Append
+          }
+
+          function Invoke-ProofCase {
+            param(
+              [string]$Name,
+              [string]$ArmTemplateInput,
+              [string]$ResourceGroupInput,
+              [string]$DataFactoryInput
+            )
+
+            $marker = Join-Path $env:RUNNER_TEMP "$Name.marker"
+            Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+            $arm = $ArmTemplateInput.Replace('__MARKER__', $marker)
+            $rg = $ResourceGroupInput.Replace('__MARKER__', $marker)
+            $df = $DataFactoryInput.Replace('__MARKER__', $marker)
+            $runFile = Join-Path $env:RUNNER_TEMP "$Name.run.ps1"
+            $template = @'
+          & "__PREPOST__" `
+            -armTemplate "__ARM__" `
+            -ResourceGroupName "__RG__" `
+            -DataFactoryName "__DF__" `
+            -predeployment $true `
+            -deleteDeployment $false
+          '@
+            $script = $template.Replace('__PREPOST__', $prepost).Replace('__ARM__', $arm).Replace('__RG__', $rg).Replace('__DF__', $df)
+            Set-Content -LiteralPath $runFile -Value $script
+            $result = & pwsh -NoProfile -File $runFile 2>&1
+            $exitCode = $LASTEXITCODE
+            $markerExists = Test-Path -LiteralPath $marker
+
+            Write-ProofLine "case=$Name"
+            Write-ProofLine "armTemplateFile=$arm"
+            Write-ProofLine "resourceGroupName=$rg"
+            Write-ProofLine "dataFactoryName=$df"
+            Write-ProofLine "exit_code=$exitCode"
+            Write-ProofLine "marker_exists=$($markerExists.ToString().ToLowerInvariant())"
+            if ($markerExists) { Write-ProofLine "marker_value=$(Get-Content -LiteralPath $marker -Raw)" }
+            Write-ProofLine '--- stdout/stderr ---'
+            foreach ($line in $result) { Write-ProofLine ([string]$line) }
+            Write-ProofLine ''
+          }
+
+          Write-ProofLine "runner_os=$env:RUNNER_OS"
+          Write-ProofLine "event_name=$env:GITHUB_EVENT_NAME"
+          Write-ProofLine "repository=$env:GITHUB_REPOSITORY"
+          Write-ProofLine "sha=$env:GITHUB_SHA"
+          Write-ProofLine 'source_sink=Azure/data-factory-deploy-action action.yml lines 35-43 and 52-60'
+
+          $payload = '$(Set-Content -LiteralPath ''__MARKER__'' -Value ''msrc_data_factory_payload'')'
+          Invoke-ProofCase -Name 'negative_control' -ArmTemplateInput 'ARMTemplateForFactory.json' -ResourceGroupInput 'rg-safe' -DataFactoryInput 'dfsafe'
+          Invoke-ProofCase -Name 'positive_arm_template' -ArmTemplateInput ($payload + 'ARMTemplateForFactory.json') -ResourceGroupInput 'rg-safe' -DataFactoryInput 'dfsafe'
+          Invoke-ProofCase -Name 'positive_resource_group' -ArmTemplateInput 'ARMTemplateForFactory.json' -ResourceGroupInput ($payload + 'rg-safe') -DataFactoryInput 'dfsafe'
+          Invoke-ProofCase -Name 'positive_data_factory' -ArmTemplateInput 'ARMTemplateForFactory.json' -ResourceGroupInput 'rg-safe' -DataFactoryInput ($payload + 'dfsafe')
+
+          $content = Get-Content -LiteralPath $proofLog -Raw
+          if ($content -notmatch 'case=negative_control') { throw 'missing negative control' }
+          if ($content -notmatch 'marker_exists=false') { throw 'missing negative marker false' }
+          if ($content -notmatch 'case=positive_arm_template') { throw 'missing arm positive' }
+          if ($content -notmatch 'case=positive_resource_group') { throw 'missing rg positive' }
+          if ($content -notmatch 'case=positive_data_factory') { throw 'missing df positive' }
+          if (($content | Select-String -Pattern 'marker_exists=true' -AllMatches).Matches.Count -lt 3) { throw 'missing positive markers' }
+          if (($content | Select-String -Pattern 'marker_value=msrc_data_factory_payload' -AllMatches).Matches.Count -lt 3) { throw 'missing marker values' }
+
+      - name: Upload proof log
+        uses: actions/upload-artifact@v4
+        with:
+          name: msrc-data-factory-proof-log
+          path: ${{ runner.temp }}/msrc-data-factory-proof.log
+          if-no-files-found: error
