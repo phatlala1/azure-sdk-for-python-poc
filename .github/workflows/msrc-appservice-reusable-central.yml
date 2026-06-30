@@ -1,0 +1,159 @@
+name: MSRC AppService reusable central
+
+on:
+  workflow_call:
+    inputs:
+      source_directory_value:
+        required: true
+        type: string
+      output_directory_value:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  reusable-source-order-canary:
+    name: reusable source/order/canary/tamper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare app with trusted build script
+        shell: bash
+        env:
+          REUSABLE_SOURCE_INPUT: ${{ inputs.source_directory_value }}
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {
+            "scripts": {
+              "build": "node -e \"const fs=require('fs'); const root=process.env.GITHUB_WORKSPACE; fs.appendFileSync(root + '/msrc_order.txt', '02_oryx_build_script\\n'); fs.mkdirSync(root + '/dist', {recursive:true}); if (fs.existsSync(root + '/dist/msrc_build_output_tamper.txt')) { fs.appendFileSync(root + '/dist/msrc_build_output_tamper.txt', '02_oryx_build_script_observed_tamper\\n'); } else { fs.writeFileSync(root + '/dist/msrc_build_output_tamper.txt', '02_no_payload_file\\n'); }\""
+            },
+            "dependencies": {},
+            "devDependencies": {}
+          }
+          JSON
+          echo 'console.log("appservice reusable proof")' > index.js
+          rm -f msrc_order.txt msrc_canary.txt
+          rm -rf dist out
+          echo "case=reusable_source_order_canary"
+          echo "central_workflow_sha=${GITHUB_SHA}"
+          printf 'workflow_call_source_directory_value=%s\n' "$REUSABLE_SOURCE_INPUT"
+          echo "pre_order_file_exists=$(test -f msrc_order.txt && echo true || echo false)"
+          echo "pre_canary_file_exists=$(test -f msrc_canary.txt && echo true || echo false)"
+          echo "pre_tamper_file_exists=$(test -f dist/msrc_build_output_tamper.txt && echo true || echo false)"
+
+      - name: Run Azure appservice-build via reusable workflow input
+        id: appservice
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+          MSRC_DUMMY_CANARY: "dummy-canary-present"
+        with:
+          source-directory: ${{ inputs.source_directory_value }}
+          output-directory: out
+          platform: nodejs
+
+      - name: Collect reusable proof evidence
+        shell: bash
+        env:
+          REUSABLE_SOURCE_INPUT: ${{ inputs.source_directory_value }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=reusable_source_order_canary"
+            echo "central_workflow_sha=${GITHUB_SHA}"
+            printf 'workflow_call_source_directory_value=%s\n' "$REUSABLE_SOURCE_INPUT"
+            echo "action_outcome=${{ steps.appservice.outcome }}"
+            echo "post_order_file_exists=$(test -f msrc_order.txt && echo true || echo false)"
+            echo "post_canary_file_exists=$(test -f msrc_canary.txt && echo true || echo false)"
+            echo "post_tamper_file_exists=$(test -f dist/msrc_build_output_tamper.txt && echo true || echo false)"
+            echo "--- msrc_order.txt"
+            if [ -f msrc_order.txt ]; then cat msrc_order.txt; fi
+            echo "--- msrc_canary.txt"
+            if [ -f msrc_canary.txt ]; then cat msrc_canary.txt; fi
+            echo "--- dist/msrc_build_output_tamper.txt"
+            if [ -f dist/msrc_build_output_tamper.txt ]; then cat dist/msrc_build_output_tamper.txt; fi
+            echo "--- output directory listing"
+            find out -maxdepth 3 -type f -print 2>/dev/null | sort || true
+          } | tee "$RUNNER_TEMP/evidence/reusable-source-order-canary.txt"
+          cp package.json "$RUNNER_TEMP/evidence/package.json"
+          [ -f msrc_order.txt ] && cp msrc_order.txt "$RUNNER_TEMP/evidence/msrc_order.txt"
+          [ -f msrc_canary.txt ] && cp msrc_canary.txt "$RUNNER_TEMP/evidence/msrc_canary.txt"
+          if [ -f dist/msrc_build_output_tamper.txt ]; then
+            mkdir -p "$RUNNER_TEMP/evidence/dist"
+            cp dist/msrc_build_output_tamper.txt "$RUNNER_TEMP/evidence/dist/msrc_build_output_tamper.txt"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-reusable-source-order-canary
+          path: ${{ runner.temp }}/evidence/
+
+  reusable-output-directory-tamper:
+    name: reusable output-directory tamper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare app
+        shell: bash
+        env:
+          REUSABLE_OUTPUT_INPUT: ${{ inputs.output_directory_value }}
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {"scripts":{"build":"echo 02_oryx_build_script"},"dependencies":{},"devDependencies":{}}
+          JSON
+          echo 'console.log("output tamper proof")' > index.js
+          rm -rf out
+          echo "case=reusable_output_directory_tamper"
+          echo "central_workflow_sha=${GITHUB_SHA}"
+          printf 'workflow_call_output_directory_value=%s\n' "$REUSABLE_OUTPUT_INPUT"
+          echo "pre_output_tamper_exists=$(test -f out/msrc_output_tamper.txt && echo true || echo false)"
+
+      - name: Run Azure appservice-build with output-directory input
+        id: appservice
+        uses: Azure/appservice-build@v3
+        continue-on-error: true
+        env:
+          ORYX_DISABLE_TELEMETRY: "true"
+        with:
+          source-directory: .
+          output-directory: ${{ inputs.output_directory_value }}
+          platform: nodejs
+
+      - name: Collect output-directory tamper evidence
+        shell: bash
+        env:
+          REUSABLE_OUTPUT_INPUT: ${{ inputs.output_directory_value }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "case=reusable_output_directory_tamper"
+            echo "central_workflow_sha=${GITHUB_SHA}"
+            printf 'workflow_call_output_directory_value=%s\n' "$REUSABLE_OUTPUT_INPUT"
+            echo "action_outcome=${{ steps.appservice.outcome }}"
+            echo "post_output_tamper_exists=$(test -f out/msrc_output_tamper.txt && echo true || echo false)"
+            if [ -f out/msrc_output_tamper.txt ]; then cat out/msrc_output_tamper.txt; fi
+            echo "--- output directory listing"
+            find out -maxdepth 3 -type f -print 2>/dev/null | sort || true
+          } | tee "$RUNNER_TEMP/evidence/reusable-output-directory-tamper.txt"
+          if [ -f out/msrc_output_tamper.txt ]; then
+            mkdir -p "$RUNNER_TEMP/evidence/out"
+            cp out/msrc_output_tamper.txt "$RUNNER_TEMP/evidence/out/msrc_output_tamper.txt"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appservice-reusable-output-directory-tamper
+          path: ${{ runner.temp }}/evidence/
